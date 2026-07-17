@@ -216,7 +216,7 @@ class IWFMModel:
             from pyiwfm.core.exceptions import FileFormatError
 
             raise FileFormatError("Nodes file not specified in PreProcessor file")
-        nodes = read_nodes(config.nodes_file)
+        nodes, nodes_factor = read_nodes(config.nodes_file)
 
         # Read elements
         if config.elements_file is None:
@@ -235,7 +235,8 @@ class IWFMModel:
             }
 
         # Create mesh
-        mesh = AppGrid(nodes=nodes, elements=elements, subregions=subregions)
+        mesh = AppGrid(nodes=nodes, elements=elements, subregions=subregions,
+                       nodes_factor=nodes_factor)
         mesh.compute_areas()
         mesh.compute_connectivity()
 

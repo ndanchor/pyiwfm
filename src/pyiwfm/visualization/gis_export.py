@@ -33,8 +33,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+import math
 
 import geopandas as gpd
+import pyproj
 from shapely.geometry import LineString, Point, Polygon
 
 if TYPE_CHECKING:
@@ -100,7 +102,10 @@ class GISExporter:
         stratigraphy: Stratigraphy | None = None,
         streams: AppStream | None = None,
         crs: str | None = None,
+        adjustment_factor: float | None = None
     ) -> None:
+
+
         """
         Initialize the GIS exporter.
 
@@ -113,7 +118,78 @@ class GISExporter:
         self.grid = grid
         self.stratigraphy = stratigraphy
         self.streams = streams
-        self.crs = crs
+        self.crs = pyproj.CRS.from_user_input(crs)
+        self.adjustment_factor = self._calculate_adjustment()
+
+    def _calculate_adjustment(self):
+        """
+        Compares the target CRS units against the model mesh unit factor
+        to guess whether model units are meters or feet and prevent
+        misaligned GIS exports.
+        """
+        # 1. Safely extract target CRS units (e.g., 'metre', 'us survey foot')
+        try:
+            crs_unit = self.crs.axis_info[0].unit_name.lower()
+        except (AttributeError, IndexError):
+            # Fallback if pyproj axis_info structure is not accessible
+            crs_unit = 'unknown'
+
+        # Get the raw preprocessor/mesh factor passed down
+        # (By default, 1.0 means no raw preprocessing transformation occurred)
+        model_factor = getattr(self.grid, 'nodes_factor', 1.0)
+
+        # 2. Establish defaults
+        crs_is_feet = 'foot' in crs_unit or 'ft' in crs_unit
+        crs_is_meters = 'metr' in crs_unit or 'm' == crs_unit
+
+        # 3. Guardrails & Unit Deduction
+        # Standard conversion constants for evaluation
+        FT_TO_M = 0.3048
+        M_TO_FT = 1.0 / FT_TO_M
+
+        # Case A: Target CRS is in FEET
+        if crs_is_feet:
+            # If the factor is close to 0.3048, the raw files were in feet,
+            # but the model internally converted them to meters.
+            if math.isclose(model_factor, FT_TO_M, rel_tol=1e-3):
+                # Model is internally in meters, but target CRS wants feet.
+                # Convert internal meters back to feet:
+                return 1.0 / model_factor
+
+            # If the factor is close to 3.28084, the raw files were in meters,
+            # and the model internally converted them to feet.
+            elif math.isclose(model_factor, M_TO_FT, rel_tol=1e-3):
+                # Model is internally in feet, target CRS wants feet.
+                return 1.0
+
+            else:
+                # Unknown units/conversion factor, do nothing.
+                return 1.0
+
+        # Case B: Target CRS is in METERS (Metric)
+        elif crs_is_meters:
+            # If the factor is close to 3.28084, the raw files were in meters,
+            # but the model internally converted them to feet.
+            if math.isclose(model_factor, M_TO_FT, rel_tol=1e-3):
+                # Model is internally in feet, but target CRS wants meters.
+                # Convert internal feet back to meters:
+                return 1.0 / model_factor
+
+            # If the factor is close to 0.3048, the raw files were in feet,
+            # but the model internally converted them to meters.
+            elif math.isclose(model_factor, FT_TO_M, rel_tol=1e-3):
+                # Model is internally in meters, target CRS wants meters.
+                return 1.0
+
+            else:
+                # Unknown units/conversion factor, do nothing.
+                return 1.0
+
+        # Case C: Unknown CRS unit type or unhandled unit
+        else:
+            # Fall back to strictly reversing the preprocessor conversion factor
+            # on the assumption that the input files matched the target CRS projection.
+            return 1.0 / model_factor if model_factor != 0 else 1.0
 
     def nodes_to_geodataframe(
         self,
@@ -131,13 +207,18 @@ class GISExporter:
         data = []
 
         for node in self.grid.iter_nodes():
+
+            converted_x = node.x * self.adjustment_factor
+            converted_y = node.y * self.adjustment_factor
+
             row = {
+
                 "node_id": node.id,
-                "x": node.x,
-                "y": node.y,
+                "x": converted_x,
+                "y": converted_y,
                 "is_boundary": node.is_boundary,
                 "area": node.area,
-                "geometry": Point(node.x, node.y),
+                "geometry": Point(converted_x, converted_y),
             }
 
             # Add stratigraphy data if available
@@ -184,7 +265,11 @@ class GISExporter:
             coords = []
             for vid in elem.vertices:
                 node = self.grid.nodes[vid]
-                coords.append((node.x, node.y))
+
+                converted_x = node.x * self.adjustment_factor
+                converted_y = node.y * self.adjustment_factor
+
+                coords.append((converted_x, converted_y))
             # Close the polygon
             coords.append(coords[0])
 
@@ -228,9 +313,16 @@ class GISExporter:
                     gw = getattr(sn, "gw_node", None)
                     if gw is not None and gw in self.grid.nodes:
                         gn = self.grid.nodes[gw]
-                        coords.append((gn.x, gn.y))
+
+                        converted_gn_x = gn.x * self.adjustment_factor
+                        converted_gn_y = gn.y * self.adjustment_factor
+
+                        coords.append((converted_gn_x, converted_gn_y))
                     elif sn.x != 0.0 or sn.y != 0.0:
-                        coords.append((sn.x, sn.y))
+                        converted_sn_x = sn.x * self.adjustment_factor
+                        converted_sn_y = sn.y * self.adjustment_factor
+
+                        coords.append((converted_sn_x, converted_sn_y))
 
             if len(coords) >= 2:
                 row = {

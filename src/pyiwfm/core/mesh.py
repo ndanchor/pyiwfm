@@ -278,6 +278,8 @@ class AppGrid:
     ----------
     nodes : dict
         Dictionary mapping node ID to :class:`Node` object.
+    nodes_factor: float, optional
+        Length factor read from the preprocessor nodes file.
     elements : dict, optional
         Dictionary mapping element ID to :class:`Element` object.
     faces : dict, optional
@@ -325,6 +327,7 @@ class AppGrid:
     """
 
     nodes: dict[int, Node]
+    nodes_factor: float | None = None
     elements: dict[int, Element] = field(default_factory=dict)
     faces: dict[int, Face] = field(default_factory=dict)
     subregions: dict[int, Subregion] = field(default_factory=dict)

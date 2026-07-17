@@ -131,7 +131,7 @@ def read_nodes(filepath: Path | str) -> dict[int, Node]:
                 f"Node count mismatch: expected {n_nodes} nodes, got {nodes_read}"
             )
 
-    return nodes
+    return nodes, fact
 
 
 def read_elements(
