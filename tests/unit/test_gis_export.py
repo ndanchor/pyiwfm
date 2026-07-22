@@ -13,9 +13,10 @@ from pyiwfm.core.mesh import AppGrid, Element, Node
 from pyiwfm.core.stratigraphy import Stratigraphy
 from pyiwfm.visualization.gis_export import GISExporter
 
-# Default CRS for tests (UTM Zone 10N - California)
+# Default CRS for tests (UTM Zone 10N - California), meters
 TEST_CRS = "EPSG:26910"
-
+# Default CRS for tests (California Teale Albers), feet
+TEST_CRS_FT = "ESRI:102600"
 
 @pytest.fixture
 def simple_grid() -> AppGrid:
@@ -248,6 +249,165 @@ class TestGISExporter:
 
         assert len(gdf) == 1
         assert gdf.iloc[0].geometry.geom_type == "Polygon"
+
+
+    def test_model_nodes_factor_storage(self, simple_grid: AppGrid) -> None:
+        """
+        Test storing of nodes_factor and successful generation of AppGrid
+        given different user-defined values
+        """
+        fact_m2ft_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=3.28084)
+
+        fact_ft2m_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=0.3048)
+
+        fact_nochg_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=1.0)
+
+        assert fact_m2ft_grid.nodes_factor == pytest.approx(3.28084)
+        assert fact_ft2m_grid.nodes_factor == pytest.approx(0.3048)
+        assert fact_nochg_grid.nodes_factor == pytest.approx(1.0)
+
+    def test_exporter_adjustment_factor(self, simple_grid: AppGrid) -> None:
+        """
+        Test storing of nodes_factor and successful generation of AppGrid
+        given different user-defined values
+        """
+        fact_neg_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=-1.0)
+
+        fact_zero_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=0.0)
+
+        neg_exporter = GISExporter(grid=fact_neg_grid, crs=TEST_CRS)
+
+        zero_exporter = GISExporter(grid=fact_zero_grid, crs=TEST_CRS)
+
+        assert neg_exporter.adjustment_factor == pytest.approx(1.0)
+        assert zero_exporter.adjustment_factor == pytest.approx(1.0)
+
+
+    def test_model_m2ft_crs_ft_xy_conversion(self, simple_grid: AppGrid) -> None:
+        """
+        Test converting model xy coordinate units to user-specified
+            crs units.
+            XY nodes: meters
+            Model units: feet
+            CRS units: feet
+        """
+        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=3.28084)
+        fact_grid.compute_connectivity()
+        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
+
+        assert exporter.adjustment_factor == pytest.approx(1.0)
+
+    def test_model_ft2m_crs_ft_xy_conversion(self, simple_grid: AppGrid) -> None:
+        """
+        Test converting model xy coordinate units to user-specified
+            crs units.
+            XY nodes: feet
+            Model units: meters
+            CRS units: feet
+        """
+        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=0.3048)
+        fact_grid.compute_connectivity()
+        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
+
+        assert exporter.adjustment_factor == pytest.approx(3.28084)
+
+    def test_model_m2ft_crs_m_xy_conversion(self, simple_grid: AppGrid) -> None:
+        """
+        Test converting model xy coordinate units to user-specified
+            crs units.
+            XY nodes: meters
+            Model units: feet
+            CRS units: meters
+        """
+        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=3.28084)
+        fact_grid.compute_connectivity()
+        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS)
+
+        assert exporter.adjustment_factor == pytest.approx(0.3048)
+
+    def test_model_ft2m_crs_m_xy_conversion(self, simple_grid: AppGrid) -> None:
+        """
+        Test converting model xy coordinate units to user-specified
+            crs units.
+            XY nodes: feet
+            Model units: meters
+            CRS units: feet
+        """
+        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=0.3048)
+        fact_grid.compute_connectivity()
+        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS)
+
+        assert exporter.adjustment_factor == pytest.approx(1.0)
+
+    def test_model_ft2ft_crs_m_xy_conversion(self, simple_grid: AppGrid) -> None:
+        """
+        Test converting model xy coordinate units to user-specified
+            crs units.
+            XY nodes: feet
+            Model units: feet
+            CRS units: meters
+        """
+        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=1.0)
+        fact_grid.compute_connectivity()
+        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS)
+
+        assert exporter.adjustment_factor == pytest.approx(0.3048)
+
+    def test_model_ft2ft_crs_ft_xy_conversion(self, simple_grid: AppGrid) -> None:
+        """
+        Test converting model xy coordinate units to user-specified
+            crs units.
+            XY nodes: feet
+            Model units: feet
+            CRS units: feet
+        """
+        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=1.0)
+        fact_grid.compute_connectivity()
+        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
+
+        assert exporter.adjustment_factor == pytest.approx(1.0)
+
+    def test_model_m2m_crs_ft_xy_conversion(self, simple_grid: AppGrid) -> None:
+        """
+        Test converting model xy coordinate units to user-specified
+            crs units.
+            XY nodes: m
+            Model units: m
+            CRS units: feet
+        """
+        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=1.0)
+        fact_grid.compute_connectivity()
+        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
+
+        assert exporter.adjustment_factor == pytest.approx(3.28084)
+
+    def test_model_m2m_crs_m_xy_conversion(self, simple_grid: AppGrid) -> None:
+        """
+        Test converting model xy coordinate units to user-specified
+            crs units.
+            XY nodes: m
+            Model units: m
+            CRS units: feet
+        """
+        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
+                            nodes_factor=1.0)
+        fact_grid.compute_connectivity()
+        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
+
+        assert exporter.adjustment_factor == pytest.approx(1.0)
+
 
 
 class TestGISExporterAttributes:

@@ -70,9 +70,10 @@ class TestNodeReader:
         from pyiwfm.io.ascii import read_nodes
 
         nodes_file = small_model_path / "Preprocessor" / "Nodes.dat"
-        nodes = read_nodes(nodes_file)
+        nodes, fact = read_nodes(nodes_file)
 
         assert len(nodes) == 441
+        assert fact == pytest.approx(1.0)
 
         # First node: (550000, 4400000)
         assert nodes[1].x == pytest.approx(550_000.0)
@@ -85,7 +86,7 @@ class TestNodeReader:
     def test_node_ids_are_one_based(self, small_model_path: Path) -> None:
         from pyiwfm.io.ascii import read_nodes
 
-        nodes = read_nodes(small_model_path / "Preprocessor" / "Nodes.dat")
+        nodes, _ = read_nodes(small_model_path / "Preprocessor" / "Nodes.dat")
         assert 1 in nodes
         assert 441 in nodes
         assert 0 not in nodes

@@ -34,6 +34,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import math
+import warnings
 
 import geopandas as gpd
 import pyproj
@@ -44,6 +45,10 @@ if TYPE_CHECKING:
     from pyiwfm.core.mesh import AppGrid
     from pyiwfm.core.stratigraphy import Stratigraphy
 
+
+class SpatialUnitWarning(UserWarning):
+    """Raised when spatial conversion factors imply a potential unit mismatch."""
+    pass
 
 class GISExporter:
     """
@@ -127,7 +132,7 @@ class GISExporter:
         to guess whether model units are meters or feet and prevent
         misaligned GIS exports.
         """
-        # 1. Safely extract target CRS units (e.g., 'metre', 'us survey foot')
+        # 1. Extract target CRS units (e.g., 'metre', 'us survey foot')
         try:
             crs_unit = self.crs.axis_info[0].unit_name.lower()
         except (AttributeError, IndexError):
@@ -163,7 +168,16 @@ class GISExporter:
                 return 1.0
 
             else:
-                # Unknown units/conversion factor, do nothing.
+                # Unknown units/conversion factor, warn user.
+                warnings.warn(
+                    f"Target CRS is in FEET, but the model conversion factor {str(model_factor)} "
+                    "is ambiguous. Please ensure the specified CRS matches the "
+                    "node coordinate units specified in the nodes.dat "
+                    "preprocessor file. No coordinate conversion occurred.",
+                    category=SpatialUnitWarning,
+                    stacklevel=2
+                    )
+
                 return 1.0
 
         # Case B: Target CRS is in METERS (Metric)
@@ -182,14 +196,29 @@ class GISExporter:
                 return 1.0
 
             else:
-                # Unknown units/conversion factor, do nothing.
+                # Unknown units/conversion factor, warn user.
+                warnings.warn(
+                    f"Target CRS is in FEET, but the model conversion factor {str(model_factor)} "
+                    "is ambiguous. Please ensure the specified CRS matches the "
+                    "node coordinate units specified in the nodes.dat "
+                    "preprocessor file. No coordinate conversion occurred.",
+                    category=SpatialUnitWarning,
+                    stacklevel=2
+                    )
                 return 1.0
 
         # Case C: Unknown CRS unit type or unhandled unit
         else:
             # Fall back to strictly reversing the preprocessor conversion factor
             # on the assumption that the input files matched the target CRS projection.
-            return 1.0 / model_factor if model_factor != 0 else 1.0
+            warnings.warn(
+                "Target CRS units are unknown. Please ensure the specified CRS "
+                "matches a standard CRS: https://spatialreference.org/"
+                " No coordinate conversion occurred.",
+                category=SpatialUnitWarning,
+                stacklevel=2
+                )
+            return 1.0 / model_factor if (model_factor != 0 or model_factor<0) else 1.0
 
     def nodes_to_geodataframe(
         self,

@@ -42,7 +42,7 @@ C  ID      X          Y
 """
         )
 
-        nodes = read_nodes(node_file)
+        nodes, _ = read_nodes(node_file)
 
         assert len(nodes) == 9
         assert nodes[1].x == 0.0
@@ -66,7 +66,7 @@ c  Lowercase c also works
 """
         )
 
-        nodes = read_nodes(node_file)
+        nodes, _ = read_nodes(node_file)
         assert len(nodes) == 4
 
     def test_read_nodes_invalid_count(self, tmp_path: Path) -> None:
@@ -253,7 +253,7 @@ class TestWriteNodes:
         write_nodes(out_file, nodes)
 
         # Read back and verify
-        nodes_back = read_nodes(out_file)
+        nodes_back, _ = read_nodes(out_file)
         assert len(nodes_back) == 4
         assert nodes_back[1].x == pytest.approx(0.0)
         assert nodes_back[2].x == pytest.approx(100.0)
@@ -264,7 +264,7 @@ class TestWriteNodes:
 
         out_file = tmp_path / "nodes_roundtrip.dat"
         write_nodes(out_file, nodes)
-        nodes_back = read_nodes(out_file)
+        nodes_back, _ = read_nodes(out_file)
 
         assert len(nodes_back) == len(nodes)
         for nid in nodes:
@@ -347,7 +347,7 @@ class TestMeshRoundtrip:
         write_elements(elem_file, grid.elements, n_subregions=2)
 
         # Read back
-        nodes_back = read_nodes(node_file)
+        nodes_back, _ = read_nodes(node_file)
         elements_back, n_sr, _ = read_elements(elem_file)
 
         # Verify
@@ -459,11 +459,12 @@ class TestReadNodesAdditional:
 2       300.0       400.0
 """
         )
-        nodes = read_nodes(node_file)
+        nodes, fact = read_nodes(node_file)
         assert len(nodes) == 2
         assert nodes[1].x == pytest.approx(100.0 * 0.3048)
         assert nodes[1].y == pytest.approx(200.0 * 0.3048)
         assert nodes[2].x == pytest.approx(300.0 * 0.3048)
+        assert fact == pytest.approx(0.3048)
 
     def test_read_nodes_all_comments_no_nnodes(self, tmp_path: Path) -> None:
         """File with only comments and no NNODES raises error."""
@@ -530,7 +531,7 @@ C  No data here
 2       30.0       40.0
 """
         )
-        nodes = read_nodes(node_file)
+        nodes, _ = read_nodes(node_file)
         assert len(nodes) == 2
         assert nodes[1].x == pytest.approx(10.0)
 
@@ -543,11 +544,12 @@ C  No data here
 2       300.0       400.0
 """
         )
-        nodes = read_nodes(node_file)
+        nodes, fact = read_nodes(node_file)
         assert len(nodes) == 2
         # With no FACT, default is 1.0
         assert nodes[1].x == pytest.approx(100.0)
         assert nodes[2].x == pytest.approx(300.0)
+        assert fact == pytest.approx(1.0)
 
     def test_read_nodes_interleaved_comments(self, tmp_path: Path) -> None:
         """Comments between node data lines are skipped."""
@@ -562,7 +564,7 @@ C  second node follows
 2       300.0       400.0
 """
         )
-        nodes = read_nodes(node_file)
+        nodes, _ = read_nodes(node_file)
         assert len(nodes) == 2
 
     def test_read_nodes_fact_value_error_falls_through(self, tmp_path: Path) -> None:
@@ -576,7 +578,7 @@ C  second node follows
 1       50.0       60.0
 """
         )
-        nodes = read_nodes(node_file)
+        nodes, _ = read_nodes(node_file)
         assert len(nodes) == 1
         assert nodes[1].x == pytest.approx(50.0)
 
