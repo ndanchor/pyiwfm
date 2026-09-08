@@ -279,7 +279,18 @@ class AppGrid:
     nodes : dict
         Dictionary mapping node ID to :class:`Node` object.
     nodes_factor: float, optional
-        Length factor read from the preprocessor nodes file.
+        Length conversion factor read from the preprocessor Nodes file
+        header (``FACT``). Already applied to ``Node.x``/``Node.y`` by
+        the reader; kept here only as a fallback signal for guessing the
+        model's native length unit when ``length_unit`` isn't set.
+    length_unit : str, optional
+        The model's native (simulation) coordinate length unit,
+        ``"FEET"`` or ``"METERS"``, resolved from the PreProcessor main
+        file's ``FACTLTOU``/``UNITLTOU`` pair (see
+        :func:`pyiwfm.core.units.resolve_model_length_unit`). ``None``
+        when unknown. This is the authoritative unit for ``Node.x``/
+        ``Node.y`` and is used by :class:`~pyiwfm.visualization.gis_export.GISExporter`
+        to align exports with a target CRS.
     elements : dict, optional
         Dictionary mapping element ID to :class:`Element` object.
     faces : dict, optional
@@ -328,6 +339,7 @@ class AppGrid:
 
     nodes: dict[int, Node]
     nodes_factor: float | None = None
+    length_unit: str | None = None
     elements: dict[int, Element] = field(default_factory=dict)
     faces: dict[int, Face] = field(default_factory=dict)
     subregions: dict[int, Subregion] = field(default_factory=dict)

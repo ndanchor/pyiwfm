@@ -397,6 +397,15 @@ def export_geopackage(
     include_streams: bool = Query(default=True, description="Include stream reaches"),
     include_subregions: bool = Query(default=True, description="Include subregion polygons"),
     include_boundary: bool = Query(default=True, description="Include model boundary"),
+    model_length_unit: str | None = Query(
+        default=None,
+        description=(
+            "Override the model's native coordinate length unit ('FEET' "
+            "or 'METERS') when it can't be determined automatically from "
+            "the PreProcessor main file or the Nodes file conversion "
+            "factor. Defaults to the loaded model's own resolved unit."
+        ),
+    ),
 ) -> Response:
     """Export the model mesh as a GeoPackage file.
 
@@ -414,6 +423,7 @@ def export_geopackage(
         stratigraphy=model.stratigraphy,
         streams=model.streams,
         crs=model_state._crs,
+        model_length_unit=model_length_unit or model.metadata.get("simulation_length_unit"),
     )
 
     with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
@@ -435,10 +445,16 @@ def export_geopackage(
         safe_name = _safe_filename(model_name)
         filename = f"{safe_name}.gpkg"
 
+        headers = {"Content-Disposition": f"attachment; filename={filename}"}
+        if exporter.resolved_model_length_unit:
+            headers["X-Model-Length-Unit"] = exporter.resolved_model_length_unit
+        else:
+            headers["X-Model-Length-Unit-Ambiguous"] = "true"
+
         return Response(
             content=data,
             media_type="application/geopackage+sqlite3",
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
+            headers=headers,
         )
     except Exception as e:
         logger.exception("GeoPackage export failed")

@@ -534,7 +534,7 @@ class TestIWFMModelFromPreprocessor:
         mock_config.volume_unit = "AF"
         mock_read_pp.return_value = mock_config
 
-        mock_read_nodes.return_value = {1: MagicMock(), 2: MagicMock()}
+        mock_read_nodes.return_value = ({1: MagicMock(), 2: MagicMock()}, 1.0)
         mock_read_elements.return_value = ({1: MagicMock()}, 1, {})
 
         mock_grid = MagicMock()
@@ -566,7 +566,7 @@ class TestIWFMModelFromPreprocessor:
         mock_config.nodes_file = Path("nodes.dat")
         mock_config.elements_file = None
         mock_read_pp.return_value = mock_config
-        mock_read_nodes.return_value = {}
+        mock_read_nodes.return_value = ({}, 1.0)
 
         with pytest.raises(Exception) as exc_info:
             IWFMModel.from_preprocessor("preprocessor.in")

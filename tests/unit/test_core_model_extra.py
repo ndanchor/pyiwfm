@@ -184,7 +184,9 @@ class TestFromPreprocessorStreamFallback:
 
         with (
             patch("pyiwfm.io.preprocessor.read_preprocessor_main", return_value=mock_pp_config),
-            patch("pyiwfm.io.ascii.read_nodes", return_value={1: MagicMock(), 2: MagicMock()}),
+            patch(
+                "pyiwfm.io.ascii.read_nodes", return_value=({1: MagicMock(), 2: MagicMock()}, 1.0)
+            ),
             patch("pyiwfm.io.ascii.read_elements", return_value=({1: MagicMock()}, 1, {})),
             patch("pyiwfm.core.mesh.AppGrid", return_value=mock_mesh),
             patch("pyiwfm.io.streams.StreamReader", return_value=mock_stream_reader),
@@ -228,7 +230,9 @@ class TestFromPreprocessorStreamFallback:
 
         with (
             patch("pyiwfm.io.preprocessor.read_preprocessor_main", return_value=mock_pp_config),
-            patch("pyiwfm.io.ascii.read_nodes", return_value={1: MagicMock(), 2: MagicMock()}),
+            patch(
+                "pyiwfm.io.ascii.read_nodes", return_value=({1: MagicMock(), 2: MagicMock()}, 1.0)
+            ),
             patch("pyiwfm.io.ascii.read_elements", return_value=({1: MagicMock()}, 1, {})),
             patch("pyiwfm.core.mesh.AppGrid", return_value=mock_mesh),
             patch("pyiwfm.io.streams.StreamReader", return_value=mock_stream_reader),

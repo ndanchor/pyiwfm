@@ -461,6 +461,98 @@ class TestExportMeshGeojson:
 
 
 # ===========================================================================
+# 2b. GET /api/export/geopackage
+# ===========================================================================
+
+
+class TestExportGeopackage:
+    """Tests for GET /api/export/geopackage."""
+
+    def test_no_model_returns_404(self, client_no_model):
+        """Return 404 when no model is loaded."""
+        resp = client_no_model.get("/api/export/geopackage")
+        assert resp.status_code == 404
+
+    def test_defaults_to_model_metadata_length_unit(self, client_with_model):
+        """The model's own resolved simulation_length_unit is used when
+        the model_length_unit query param is omitted."""
+        client, model = client_with_model
+        model.metadata["simulation_length_unit"] = "FEET"
+
+        mock_exporter = MagicMock()
+        mock_exporter.resolved_model_length_unit = "FEET"
+        mock_exporter.export_geopackage.side_effect = lambda path, **kw: (
+            __import__("pathlib").Path(path).write_bytes(b"fake-gpkg")
+        )
+
+        with patch(
+            "pyiwfm.visualization.gis_export.GISExporter", return_value=mock_exporter
+        ) as mock_cls:
+            resp = client.get("/api/export/geopackage")
+
+        assert resp.status_code == 200
+        assert resp.headers["X-Model-Length-Unit"] == "FEET"
+        assert "X-Model-Length-Unit-Ambiguous" not in resp.headers
+        _, kwargs = mock_cls.call_args
+        assert kwargs["model_length_unit"] == "FEET"
+
+    def test_query_param_overrides_model_metadata(self, client_with_model):
+        """An explicit model_length_unit query param takes priority over
+        the model's own metadata."""
+        client, model = client_with_model
+        model.metadata["simulation_length_unit"] = "FEET"
+
+        mock_exporter = MagicMock()
+        mock_exporter.resolved_model_length_unit = "METERS"
+        mock_exporter.export_geopackage.side_effect = lambda path, **kw: (
+            __import__("pathlib").Path(path).write_bytes(b"fake-gpkg")
+        )
+
+        with patch(
+            "pyiwfm.visualization.gis_export.GISExporter", return_value=mock_exporter
+        ) as mock_cls:
+            resp = client.get("/api/export/geopackage?model_length_unit=METERS")
+
+        assert resp.status_code == 200
+        assert resp.headers["X-Model-Length-Unit"] == "METERS"
+        _, kwargs = mock_cls.call_args
+        assert kwargs["model_length_unit"] == "METERS"
+
+    def test_ambiguous_unit_flagged_in_response_header(self, client_with_model):
+        """When GISExporter can't resolve the model's unit, the response
+        still succeeds but flags the ambiguity via a response header
+        rather than silently guessing."""
+        client, _ = client_with_model
+
+        mock_exporter = MagicMock()
+        mock_exporter.resolved_model_length_unit = None
+        mock_exporter.export_geopackage.side_effect = lambda path, **kw: (
+            __import__("pathlib").Path(path).write_bytes(b"fake-gpkg")
+        )
+
+        with patch("pyiwfm.visualization.gis_export.GISExporter", return_value=mock_exporter):
+            resp = client.get("/api/export/geopackage")
+
+        assert resp.status_code == 200
+        assert resp.headers["X-Model-Length-Unit-Ambiguous"] == "true"
+        assert "X-Model-Length-Unit" not in resp.headers
+
+    def test_export_failure_returns_500(self, client_with_model):
+        """Return 500 when the underlying export raises."""
+        client, _ = client_with_model
+
+        mock_exporter = MagicMock()
+        mock_exporter.resolved_model_length_unit = "FEET"
+        mock_exporter.export_geopackage.side_effect = RuntimeError("disk full")
+
+        with patch("pyiwfm.visualization.gis_export.GISExporter", return_value=mock_exporter):
+            resp = client.get("/api/export/geopackage")
+
+        assert resp.status_code == 500
+        assert "disk full" in resp.json()["detail"]
+
+
+# ===========================================================================
 # 3. GET /api/export/budget-csv
 # ===========================================================================
 

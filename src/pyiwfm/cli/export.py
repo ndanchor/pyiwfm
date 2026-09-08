@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,28 @@ def add_export_parser(subparsers: argparse._SubParsersAction) -> None:  # type: 
         choices=["vtk", "gpkg", "all"],
         default="all",
         help="Export format (default: all)",
+    )
+    p.add_argument(
+        "--crs",
+        type=str,
+        default=None,
+        help=(
+            "Target CRS for the GeoPackage export (e.g. 'EPSG:26910'). "
+            "If omitted, exported geometries carry no CRS and coordinates "
+            "are written in the model's native length unit unconverted."
+        ),
+    )
+    p.add_argument(
+        "--model-length-unit",
+        choices=["feet", "meters"],
+        default=None,
+        help=(
+            "The model's native coordinate length unit. Only needed with "
+            "--crs, and only when it can't be inferred from the "
+            "PreProcessor main file (FACTLTOU/UNITLTOU) or the Nodes file "
+            "conversion factor -- if it's needed and omitted in an "
+            "interactive terminal, you will be prompted for it."
+        ),
     )
     p.add_argument(
         "--debug",
@@ -128,11 +151,51 @@ def run_export(args: argparse.Namespace) -> int:
             from pyiwfm.visualization import GISExporter
 
             if model.mesh:
+                model_length_unit = (
+                    args.model_length_unit.upper() if args.model_length_unit else None
+                )
                 gis_exporter = GISExporter(
                     grid=model.mesh,
                     stratigraphy=model.stratigraphy,
                     streams=model.streams,
+                    crs=args.crs,
+                    model_length_unit=model_length_unit,
                 )
+
+                # If a target CRS was given but the model's native unit
+                # couldn't be resolved automatically, ask interactively
+                # rather than silently skipping coordinate conversion.
+                if (
+                    args.crs
+                    and model_length_unit is None
+                    and gis_exporter.resolved_model_length_unit is None
+                    and gis_exporter.resolved_crs_length_unit is not None
+                    and sys.stdin.isatty()
+                ):
+                    answer = (
+                        input(
+                            "Cannot determine the model's native coordinate "
+                            "length unit from the PreProcessor file or Nodes "
+                            "file conversion factor. Are the model's node "
+                            "coordinates in feet or meters? [feet/meters]: "
+                        )
+                        .strip()
+                        .lower()
+                    )
+                    unit = {"feet": "FEET", "ft": "FEET", "meters": "METERS", "m": "METERS"}.get(
+                        answer
+                    )
+                    if unit:
+                        gis_exporter = GISExporter(
+                            grid=model.mesh,
+                            stratigraphy=model.stratigraphy,
+                            streams=model.streams,
+                            crs=args.crs,
+                            model_length_unit=unit,
+                        )
+                    else:
+                        print(f"  Unrecognized unit {answer!r}; proceeding without conversion.")
+
                 gpkg = output_dir / "model.gpkg"
                 gis_exporter.export_geopackage(gpkg)
                 print(f"  Exported: {gpkg}")

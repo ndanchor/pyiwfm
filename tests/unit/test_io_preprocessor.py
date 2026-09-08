@@ -77,6 +77,89 @@ subregions.dat                           / SUBREGIONS_FILE
         assert config.subregions_file == tmp_path / "subregions.dat"
 
 
+class TestReadPreProcessorMainFactltouUnitltou:
+    """Tests for parsing the real IWFM FACTLTOU/UNITLTOU tokens.
+
+    Real PreProcessor main files (unlike the simplified LENGTH_UNIT tag
+    written by write_preprocessor_main()) label these lines "/FACTLTOU"
+    and "/UNITLTOU", not "/LENGTH_UNIT" -- see e.g. C2VSimFG's
+    Preprocessor.in.
+    """
+
+    def _write(self, tmp_path: Path, factltou: str, unitltou: str) -> Path:
+        main_file = tmp_path / "test_pp.in"
+        main_file.write_text(
+            f"""C  Test PreProcessor Main Input File
+Test Model                               / MODEL_NAME
+nodes.dat                                / NODES_FILE
+elements.dat                             / ELEMENTS_FILE
+{factltou:<40}  /FACTLTOU
+{unitltou:<40}  /UNITLTOU
+"""
+        )
+        return main_file
+
+    def test_factltou_1_feet_resolves_simulation_unit_feet(self, tmp_path: Path) -> None:
+        """FACTLTOU=1, UNITLTOU=FEET (the common C2VSimFG case) -> model
+        coordinates are in feet."""
+        main_file = self._write(tmp_path, "1", "FEET")
+
+        config = read_preprocessor_main(main_file)
+
+        assert config.length_factor == pytest.approx(1.0)
+        assert config.length_unit == "FEET"
+        assert config.simulation_length_unit == "FEET"
+
+    def test_factltou_meters_output_resolves_simulation_unit_feet(self, tmp_path: Path) -> None:
+        """FACTLTOU=0.3048, UNITLTOU=METERS -> the simulation reports in
+        meters by converting from an internal foot unit."""
+        main_file = self._write(tmp_path, "0.3048", "METERS")
+
+        config = read_preprocessor_main(main_file)
+
+        assert config.simulation_length_unit == "FEET"
+
+    def test_factltou_feet_output_resolves_simulation_unit_meters(self, tmp_path: Path) -> None:
+        """FACTLTOU=3.28084, UNITLTOU=FEET -> the simulation reports in
+        feet by converting from an internal meter unit."""
+        main_file = self._write(tmp_path, "3.28084", "FEET")
+
+        config = read_preprocessor_main(main_file)
+
+        assert config.simulation_length_unit == "METERS"
+
+    def test_unrecognized_factltou_leaves_simulation_unit_none(self, tmp_path: Path) -> None:
+        """A FACTLTOU that matches neither 1 foot nor 1 meter in physical
+        size can't be resolved to either unit (callers fall back
+        elsewhere, e.g. GISExporter's Nodes-file-factor guess)."""
+        main_file = self._write(tmp_path, "2.5", "FEET")
+
+        config = read_preprocessor_main(main_file)
+
+        assert config.length_factor == pytest.approx(2.5)
+        assert config.simulation_length_unit is None
+
+    def test_missing_factltou_unitltou_falls_back_to_defaults(self, tmp_path: Path) -> None:
+        """Without FACTLTOU/UNITLTOU, length_unit/length_factor keep their
+        dataclass defaults ("FT"/1.0), which resolve to FEET -- the same
+        assumption the rest of the codebase already makes for a bare
+        PreProcessorConfig."""
+        main_file = tmp_path / "test_pp.in"
+        main_file.write_text(
+            """C  Test PreProcessor Main Input File
+Test Model                               / MODEL_NAME
+nodes.dat                                / NODES_FILE
+elements.dat                             / ELEMENTS_FILE
+"""
+        )
+
+        config = read_preprocessor_main(main_file)
+
+        assert config.length_unit == "FT"
+        assert config.length_factor == pytest.approx(1.0)
+        assert config.simulation_length_unit == "FEET"
+
+
 class TestWritePreProcessorMain:
     """Tests for writing PreProcessor main input files."""
 

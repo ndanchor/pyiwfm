@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import geopandas
@@ -11,12 +12,13 @@ import pytest
 from pyiwfm.components.stream import AppStream, StrmNode, StrmReach
 from pyiwfm.core.mesh import AppGrid, Element, Node
 from pyiwfm.core.stratigraphy import Stratigraphy
-from pyiwfm.visualization.gis_export import GISExporter
+from pyiwfm.visualization.gis_export import GISExporter, SpatialUnitWarning
 
 # Default CRS for tests (UTM Zone 10N - California), meters
 TEST_CRS = "EPSG:26910"
 # Default CRS for tests (California Teale Albers), feet
 TEST_CRS_FT = "ESRI:102600"
+
 
 @pytest.fixture
 def simple_grid() -> AppGrid:
@@ -250,20 +252,22 @@ class TestGISExporter:
         assert len(gdf) == 1
         assert gdf.iloc[0].geometry.geom_type == "Polygon"
 
-
     def test_model_nodes_factor_storage(self, simple_grid: AppGrid) -> None:
         """
         Test storing of nodes_factor and successful generation of AppGrid
         given different user-defined values
         """
-        fact_m2ft_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=3.28084)
+        fact_m2ft_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=3.28084
+        )
 
-        fact_ft2m_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=0.3048)
+        fact_ft2m_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=0.3048
+        )
 
-        fact_nochg_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=1.0)
+        fact_nochg_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=1.0
+        )
 
         assert fact_m2ft_grid.nodes_factor == pytest.approx(3.28084)
         assert fact_ft2m_grid.nodes_factor == pytest.approx(0.3048)
@@ -274,11 +278,13 @@ class TestGISExporter:
         Test storing of nodes_factor and successful generation of AppGrid
         given different user-defined values
         """
-        fact_neg_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=-1.0)
+        fact_neg_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=-1.0
+        )
 
-        fact_zero_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=0.0)
+        fact_zero_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=0.0
+        )
 
         neg_exporter = GISExporter(grid=fact_neg_grid, crs=TEST_CRS)
 
@@ -286,7 +292,6 @@ class TestGISExporter:
 
         assert neg_exporter.adjustment_factor == pytest.approx(1.0)
         assert zero_exporter.adjustment_factor == pytest.approx(1.0)
-
 
     def test_model_m2ft_crs_ft_xy_conversion(self, simple_grid: AppGrid) -> None:
         """
@@ -296,8 +301,9 @@ class TestGISExporter:
             Model units: feet
             CRS units: feet
         """
-        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=3.28084)
+        fact_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=3.28084
+        )
         fact_grid.compute_connectivity()
         exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
 
@@ -311,8 +317,9 @@ class TestGISExporter:
             Model units: meters
             CRS units: feet
         """
-        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=0.3048)
+        fact_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=0.3048
+        )
         fact_grid.compute_connectivity()
         exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
 
@@ -326,8 +333,9 @@ class TestGISExporter:
             Model units: feet
             CRS units: meters
         """
-        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=3.28084)
+        fact_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=3.28084
+        )
         fact_grid.compute_connectivity()
         exporter = GISExporter(grid=fact_grid, crs=TEST_CRS)
 
@@ -341,8 +349,9 @@ class TestGISExporter:
             Model units: meters
             CRS units: feet
         """
-        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=0.3048)
+        fact_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=0.3048
+        )
         fact_grid.compute_connectivity()
         exporter = GISExporter(grid=fact_grid, crs=TEST_CRS)
 
@@ -355,12 +364,19 @@ class TestGISExporter:
             XY nodes: feet
             Model units: feet
             CRS units: meters
-        """
-        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=1.0)
-        fact_grid.compute_connectivity()
-        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS)
 
+        A Nodes-file factor of 1.0 alone is ambiguous (see
+        test_ambiguous_factor_with_crs_warns_and_skips_conversion), so the
+        model's native unit is disambiguated explicitly here via
+        model_length_unit -- exactly what the ambiguous case calls for.
+        """
+        fact_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=1.0
+        )
+        fact_grid.compute_connectivity()
+        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS, model_length_unit="FEET")
+
+        assert exporter.resolved_model_length_unit == "FEET"
         assert exporter.adjustment_factor == pytest.approx(0.3048)
 
     def test_model_ft2ft_crs_ft_xy_conversion(self, simple_grid: AppGrid) -> None:
@@ -371,8 +387,9 @@ class TestGISExporter:
             Model units: feet
             CRS units: feet
         """
-        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=1.0)
+        fact_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=1.0
+        )
         fact_grid.compute_connectivity()
         exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
 
@@ -385,29 +402,75 @@ class TestGISExporter:
             XY nodes: m
             Model units: m
             CRS units: feet
-        """
-        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=1.0)
-        fact_grid.compute_connectivity()
-        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
 
+        A Nodes-file factor of 1.0 alone is ambiguous (see
+        test_ambiguous_factor_with_crs_warns_and_skips_conversion), so the
+        model's native unit is disambiguated explicitly here via
+        model_length_unit -- exactly what the ambiguous case calls for.
+        """
+        fact_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=1.0
+        )
+        fact_grid.compute_connectivity()
+        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT, model_length_unit="METERS")
+
+        assert exporter.resolved_model_length_unit == "METERS"
         assert exporter.adjustment_factor == pytest.approx(3.28084)
 
-    def test_model_m2m_crs_m_xy_conversion(self, simple_grid: AppGrid) -> None:
+    def test_ambiguous_factor_with_crs_warns_and_skips_conversion(
+        self, simple_grid: AppGrid
+    ) -> None:
         """
-        Test converting model xy coordinate units to user-specified
-            crs units.
-            XY nodes: m
-            Model units: m
-            CRS units: feet
+        A Nodes-file factor of 1.0 alone can't say what unit the model's
+        (matching) input and internal coordinates are in -- it's genuinely
+        ambiguous regardless of the target CRS's unit. GISExporter should
+        warn rather than crash or silently guess, and fall back to no
+        conversion.
         """
-        fact_grid = AppGrid(nodes=simple_grid.nodes, elements=simple_grid.elements,
-                            nodes_factor=1.0)
+        fact_grid = AppGrid(
+            nodes=simple_grid.nodes, elements=simple_grid.elements, nodes_factor=1.0
+        )
         fact_grid.compute_connectivity()
-        exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
 
+        with pytest.warns(SpatialUnitWarning):
+            exporter = GISExporter(grid=fact_grid, crs=TEST_CRS_FT)
+
+        assert exporter.resolved_model_length_unit is None
         assert exporter.adjustment_factor == pytest.approx(1.0)
 
+    def test_grid_length_unit_resolves_ambiguous_factor(self, simple_grid: AppGrid) -> None:
+        """
+        grid.length_unit (as set by IWFMModel.from_preprocessor() from the
+        PreProcessor main file's FACTLTOU/UNITLTOU) disambiguates a Nodes
+        factor of 1.0 without needing an explicit model_length_unit
+        override, and without any warning.
+        """
+        fact_grid = AppGrid(
+            nodes=simple_grid.nodes,
+            elements=simple_grid.elements,
+            nodes_factor=1.0,
+            length_unit="FEET",
+        )
+        fact_grid.compute_connectivity()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SpatialUnitWarning)
+            exporter = GISExporter(grid=fact_grid, crs=TEST_CRS)
+
+        assert exporter.resolved_model_length_unit == "FEET"
+        assert exporter.adjustment_factor == pytest.approx(0.3048)
+
+    def test_no_crs_skips_unit_resolution_entirely(self, simple_grid: AppGrid) -> None:
+        """GISExporter(crs=None) must not crash, even with an ambiguous
+        or missing nodes_factor -- there's nothing to align against."""
+        exporter = GISExporter(grid=simple_grid)
+
+        assert exporter.crs is None
+        assert exporter.resolved_crs_length_unit is None
+        assert exporter.adjustment_factor == pytest.approx(1.0)
+
+        gdf = exporter.nodes_to_geodataframe()
+        assert gdf.crs is None
 
 
 class TestGISExporterAttributes:

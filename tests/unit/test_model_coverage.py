@@ -422,7 +422,7 @@ class TestFromPreprocessor:
                 "pyiwfm.io.preprocessor.read_preprocessor_main",
                 return_value=pp_config,
             ),
-            patch("pyiwfm.io.ascii.read_nodes", return_value=nodes),
+            patch("pyiwfm.io.ascii.read_nodes", return_value=(nodes, 1.0)),
             patch("pyiwfm.io.ascii.read_elements", return_value=elements),
             patch("pyiwfm.core.mesh.AppGrid", return_value=mesh_mock),
         )
@@ -456,7 +456,7 @@ class TestFromPreprocessor:
             ),
             patch(
                 "pyiwfm.io.ascii.read_nodes",
-                return_value={1: MagicMock()},
+                return_value=({1: MagicMock()}, 1.0),
             ),
         ):
             with pytest.raises(FileFormatError, match="Elements file"):

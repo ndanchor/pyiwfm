@@ -62,6 +62,16 @@ class PreProcessorConfig:
     # Model settings
     n_layers: int = 1
     length_unit: str = "FT"
+    """UNITLTOU -- the output/reporting length unit (not necessarily the
+    model's internal simulation unit; see ``simulation_length_unit``)."""
+    length_factor: float = 1.0
+    """FACTLTOU -- factor converting the simulation length unit to
+    ``length_unit`` for reporting."""
+    simulation_length_unit: str | None = None
+    """The model's native (simulation) coordinate length unit, ``"FEET"``
+    or ``"METERS"``, derived from ``length_factor``/``length_unit`` via
+    :func:`pyiwfm.core.units.resolve_model_length_unit`. ``None`` if it
+    can't be determined."""
     area_unit: str = "ACRES"
     volume_unit: str = "AF"
 
@@ -145,7 +155,17 @@ def read_preprocessor_main(filepath: Path | str) -> PreProcessorConfig:
                 config.n_layers = int(value)
             except ValueError:
                 pass
+        elif "FACTLTOU" in desc:
+            try:
+                config.length_factor = float(value)
+            except ValueError:
+                pass
+        elif "UNITLTOU" in desc:
+            config.length_unit = value.upper()
         elif "LENGTH" in desc and "UNIT" in desc:
+            # Fallback for the simplified round-trip format written by
+            # write_preprocessor_main() below (not real IWFM's FACTLTOU/
+            # UNITLTOU tokens, which are matched explicitly above).
             config.length_unit = value.upper()
         elif "AREA" in desc and "UNIT" in desc:
             config.area_unit = value.upper()
@@ -153,6 +173,12 @@ def read_preprocessor_main(filepath: Path | str) -> PreProcessorConfig:
             config.volume_unit = value.upper()
         elif "OUTPUT" in desc and "DIR" in desc:
             config.output_dir = value_path
+
+    from pyiwfm.core.units import resolve_model_length_unit
+
+    config.simulation_length_unit = resolve_model_length_unit(
+        config.length_unit, config.length_factor
+    )
 
     return config
 

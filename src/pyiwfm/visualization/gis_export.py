@@ -31,14 +31,20 @@ Export a mesh to GeoPackage:
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
 import math
 import warnings
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import geopandas as gpd
 import pyproj
 from shapely.geometry import LineString, Point, Polygon
+
+from pyiwfm.core.units import (
+    FEET_PER_METER,
+    METERS_PER_FOOT,
+    normalize_length_unit_name,
+)
 
 if TYPE_CHECKING:
     from pyiwfm.components.stream import AppStream
@@ -47,8 +53,8 @@ if TYPE_CHECKING:
 
 
 class SpatialUnitWarning(UserWarning):
-    """Raised when spatial conversion factors imply a potential unit mismatch."""
-    pass
+    """Warned when a GIS export's coordinate unit conversion is uncertain."""
+
 
 class GISExporter:
     """
@@ -68,7 +74,32 @@ class GISExporter:
         Stream network. If provided, enables stream layer export.
     crs : str, optional
         Coordinate reference system (e.g., 'EPSG:26910', 'EPSG:2227').
-        If None, output files will have no CRS defined.
+        If None, output files will have no CRS defined and node/element
+        coordinates are written unconverted.
+    model_length_unit : str, optional
+        The model's native coordinate length unit ('FEET' or 'METERS'),
+        used together with *crs* to convert node/element/stream
+        coordinates (which are stored in this unit) into whatever unit
+        *crs* expects. If not given, falls back to ``grid.length_unit``
+        (set by :meth:`IWFMModel.from_preprocessor` from the
+        PreProcessor main file's FACTLTOU/UNITLTOU) and then to a
+        best-effort guess from ``grid.nodes_factor``. Pass this
+        explicitly when that can't be resolved -- see
+        :attr:`resolved_model_length_unit`.
+
+    Attributes
+    ----------
+    resolved_model_length_unit : str or None
+        The model length unit actually used ('FEET', 'METERS', or None
+        if it could not be determined).
+    resolved_crs_length_unit : str or None
+        The target CRS's length unit actually used, or None if *crs* is
+        unset or its unit could not be determined.
+    adjustment_factor : float
+        The multiplicative factor applied to node/element/stream
+        coordinates to convert them from ``resolved_model_length_unit``
+        to ``resolved_crs_length_unit``. 1.0 when no conversion is
+        needed or possible.
 
     Raises
     ------
@@ -106,11 +137,9 @@ class GISExporter:
         grid: AppGrid,
         stratigraphy: Stratigraphy | None = None,
         streams: AppStream | None = None,
-        crs: str | None = None,
-        adjustment_factor: float | None = None
+        crs: str | pyproj.CRS | None = None,
+        model_length_unit: str | None = None,
     ) -> None:
-
-
         """
         Initialize the GIS exporter.
 
@@ -118,107 +147,120 @@ class GISExporter:
             grid: Model mesh
             stratigraphy: Model stratigraphy (optional)
             streams: Stream network (optional)
-            crs: Coordinate reference system (e.g., 'EPSG:26910')
+            crs: Coordinate reference system (e.g., 'EPSG:26910'). If
+                None, no CRS is assigned and coordinates are exported
+                unconverted.
+            model_length_unit: Explicit override for the model's native
+                coordinate length unit ('FEET' or 'METERS'). See the
+                class docstring for the fallback order used when this
+                is omitted.
         """
         self.grid = grid
         self.stratigraphy = stratigraphy
         self.streams = streams
-        self.crs = pyproj.CRS.from_user_input(crs)
+        self.crs = pyproj.CRS.from_user_input(crs) if crs is not None else None
+        self._model_length_unit_override = model_length_unit
+
+        self.resolved_crs_length_unit = self._crs_length_unit()
+        self.resolved_model_length_unit = self._model_length_unit()
         self.adjustment_factor = self._calculate_adjustment()
 
-    def _calculate_adjustment(self):
-        """
-        Compares the target CRS units against the model mesh unit factor
-        to guess whether model units are meters or feet and prevent
-        misaligned GIS exports.
-        """
-        # 1. Extract target CRS units (e.g., 'metre', 'us survey foot')
+    def _crs_length_unit(self) -> str | None:
+        """Return the target CRS's length unit ('FEET'/'METERS'/None)."""
+        if self.crs is None:
+            return None
         try:
-            crs_unit = self.crs.axis_info[0].unit_name.lower()
+            unit_name = self.crs.axis_info[0].unit_name
         except (AttributeError, IndexError):
-            # Fallback if pyproj axis_info structure is not accessible
-            crs_unit = 'unknown'
+            return None
+        return normalize_length_unit_name(unit_name)
 
-        # Get the raw preprocessor/mesh factor passed down
-        # (By default, 1.0 means no raw preprocessing transformation occurred)
-        model_factor = getattr(self.grid, 'nodes_factor', 1.0)
+    def _model_length_unit(self) -> str | None:
+        """
+        Resolve the model's native coordinate length unit, in priority
+        order:
 
-        # 2. Establish defaults
-        crs_is_feet = 'foot' in crs_unit or 'ft' in crs_unit
-        crs_is_meters = 'metr' in crs_unit or 'm' == crs_unit
+        1. An explicit ``model_length_unit`` passed to the constructor.
+        2. ``grid.length_unit``, set by
+           :meth:`IWFMModel.from_preprocessor` from the PreProcessor
+           main file's FACTLTOU/UNITLTOU pair -- authoritative.
+        3. A best-effort guess from the raw Nodes file conversion factor
+           (``grid.nodes_factor``) against the feet<->meters conversion
+           constants. This only resolves the ambiguity when the factor
+           isn't ~1.0 -- a factor of 1.0 genuinely doesn't say what unit
+           the (matching) input and internal coordinates are in.
 
-        # 3. Guardrails & Unit Deduction
-        # Standard conversion constants for evaluation
-        FT_TO_M = 0.3048
-        M_TO_FT = 1.0 / FT_TO_M
+        Returns None if none of the above resolve it.
+        """
+        override = normalize_length_unit_name(self._model_length_unit_override)
+        if override is not None:
+            return override
 
-        # Case A: Target CRS is in FEET
-        if crs_is_feet:
-            # If the factor is close to 0.3048, the raw files were in feet,
-            # but the model internally converted them to meters.
-            if math.isclose(model_factor, FT_TO_M, rel_tol=1e-3):
-                # Model is internally in meters, but target CRS wants feet.
-                # Convert internal meters back to feet:
-                return 1.0 / model_factor
+        grid_unit = normalize_length_unit_name(getattr(self.grid, "length_unit", None))
+        if grid_unit is not None:
+            return grid_unit
 
-            # If the factor is close to 3.28084, the raw files were in meters,
-            # and the model internally converted them to feet.
-            elif math.isclose(model_factor, M_TO_FT, rel_tol=1e-3):
-                # Model is internally in feet, target CRS wants feet.
-                return 1.0
+        # Fallback: guess from the Nodes file FACT value alone.
+        model_factor = getattr(self.grid, "nodes_factor", None)
+        if model_factor is None or model_factor <= 0:
+            return None
+        if math.isclose(model_factor, FEET_PER_METER, rel_tol=1e-3):
+            # Raw coordinates were in meters, converted to internal feet.
+            return "FEET"
+        if math.isclose(model_factor, METERS_PER_FOOT, rel_tol=1e-3):
+            # Raw coordinates were in feet, converted to internal meters.
+            return "METERS"
+        return None
 
-            else:
-                # Unknown units/conversion factor, warn user.
-                warnings.warn(
-                    f"Target CRS is in FEET, but the model conversion factor {str(model_factor)} "
-                    "is ambiguous. Please ensure the specified CRS matches the "
-                    "node coordinate units specified in the nodes.dat "
-                    "preprocessor file. No coordinate conversion occurred.",
-                    category=SpatialUnitWarning,
-                    stacklevel=2
-                    )
+    def _calculate_adjustment(self) -> float:
+        """
+        Determine the multiplicative factor that converts node/element/
+        stream coordinates (stored in the model's native length unit)
+        into the units expected by the target CRS.
 
-                return 1.0
+        Returns 1.0 (no conversion) when no CRS is set. Otherwise, if
+        either the CRS's unit or the model's native unit can't be
+        determined, also returns 1.0 but emits a :class:`SpatialUnitWarning`
+        -- silently assuming no conversion is needed can misplace the
+        exported geometry, so callers should heed the warning (or pass
+        ``model_length_unit`` explicitly to resolve it).
+        """
+        if self.crs is None:
+            return 1.0
 
-        # Case B: Target CRS is in METERS (Metric)
-        elif crs_is_meters:
-            # If the factor is close to 3.28084, the raw files were in meters,
-            # but the model internally converted them to feet.
-            if math.isclose(model_factor, M_TO_FT, rel_tol=1e-3):
-                # Model is internally in feet, but target CRS wants meters.
-                # Convert internal feet back to meters:
-                return 1.0 / model_factor
-
-            # If the factor is close to 0.3048, the raw files were in feet,
-            # but the model internally converted them to meters.
-            elif math.isclose(model_factor, FT_TO_M, rel_tol=1e-3):
-                # Model is internally in meters, target CRS wants meters.
-                return 1.0
-
-            else:
-                # Unknown units/conversion factor, warn user.
-                warnings.warn(
-                    f"Target CRS is in FEET, but the model conversion factor {str(model_factor)} "
-                    "is ambiguous. Please ensure the specified CRS matches the "
-                    "node coordinate units specified in the nodes.dat "
-                    "preprocessor file. No coordinate conversion occurred.",
-                    category=SpatialUnitWarning,
-                    stacklevel=2
-                    )
-                return 1.0
-
-        # Case C: Unknown CRS unit type or unhandled unit
-        else:
-            # Fall back to strictly reversing the preprocessor conversion factor
-            # on the assumption that the input files matched the target CRS projection.
+        crs_unit = self.resolved_crs_length_unit
+        if crs_unit is None:
             warnings.warn(
-                "Target CRS units are unknown. Please ensure the specified CRS "
-                "matches a standard CRS: https://spatialreference.org/"
-                " No coordinate conversion occurred.",
+                "Could not determine the target CRS's length unit; "
+                "assuming it already matches the model and applying no "
+                "coordinate conversion. Please verify the specified CRS: "
+                "https://spatialreference.org/",
                 category=SpatialUnitWarning,
-                stacklevel=2
-                )
-            return 1.0 / model_factor if (model_factor != 0 or model_factor<0) else 1.0
+                stacklevel=3,
+            )
+            return 1.0
+
+        model_unit = self.resolved_model_length_unit
+        if model_unit is None:
+            warnings.warn(
+                "Could not determine the model's native coordinate length "
+                "unit: the PreProcessor main file's FACTLTOU/UNITLTOU are "
+                "unavailable and the Nodes file conversion factor "
+                f"({getattr(self.grid, 'nodes_factor', None)!r}) is "
+                "ambiguous (e.g. 1.0). Assuming it already matches the "
+                "target CRS and applying no coordinate conversion. Pass "
+                "GISExporter(..., model_length_unit='FEET' or 'METERS') "
+                "to resolve this explicitly.",
+                category=SpatialUnitWarning,
+                stacklevel=3,
+            )
+            return 1.0
+
+        if model_unit == crs_unit:
+            return 1.0
+        if model_unit == "FEET" and crs_unit == "METERS":
+            return METERS_PER_FOOT
+        return FEET_PER_METER  # model_unit == "METERS" and crs_unit == "FEET"
 
     def nodes_to_geodataframe(
         self,
@@ -236,12 +278,10 @@ class GISExporter:
         data = []
 
         for node in self.grid.iter_nodes():
-
             converted_x = node.x * self.adjustment_factor
             converted_y = node.y * self.adjustment_factor
 
             row = {
-
                 "node_id": node.id,
                 "x": converted_x,
                 "y": converted_y,

@@ -235,8 +235,13 @@ class IWFMModel:
             }
 
         # Create mesh
-        mesh = AppGrid(nodes=nodes, elements=elements, subregions=subregions,
-                       nodes_factor=nodes_factor)
+        mesh = AppGrid(
+            nodes=nodes,
+            elements=elements,
+            subregions=subregions,
+            nodes_factor=nodes_factor,
+            length_unit=config.simulation_length_unit,
+        )
         mesh.compute_areas()
         mesh.compute_connectivity()
 
@@ -254,6 +259,7 @@ class IWFMModel:
                 "source": "preprocessor",
                 "preprocessor_file": str(pp_file),
                 "length_unit": config.length_unit,
+                "simulation_length_unit": config.simulation_length_unit,
                 "area_unit": config.area_unit,
                 "volume_unit": config.volume_unit,
             },
