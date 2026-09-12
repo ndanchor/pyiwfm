@@ -25,14 +25,12 @@ Export a mesh to GeoPackage:
 >>> grid.compute_connectivity()
 >>>
 >>> # Export to GeoPackage
->>> exporter = GISExporter(grid=grid, crs="EPSG:26910")
+>>> exporter = GISExporter(grid=grid, input_crs="EPSG:26910", output_crs="EPSG:4326")
 >>> exporter.export_geopackage("model.gpkg")
 """
 
 from __future__ import annotations
 
-import math
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -40,21 +38,10 @@ import geopandas as gpd
 import pyproj
 from shapely.geometry import LineString, Point, Polygon
 
-from pyiwfm.core.units import (
-    FEET_PER_METER,
-    METERS_PER_FOOT,
-    normalize_length_unit_name,
-)
-
 if TYPE_CHECKING:
     from pyiwfm.components.stream import AppStream
     from pyiwfm.core.mesh import AppGrid
     from pyiwfm.core.stratigraphy import Stratigraphy
-
-
-class SpatialUnitWarning(UserWarning):
-    """Warned when a GIS export's coordinate unit conversion is uncertain."""
-
 
 class GISExporter:
     """
@@ -72,34 +59,12 @@ class GISExporter:
         as attributes to the nodes GeoDataFrame.
     streams : AppStream, optional
         Stream network. If provided, enables stream layer export.
-    crs : str, optional
-        Coordinate reference system (e.g., 'EPSG:26910', 'EPSG:2227').
-        If None, output files will have no CRS defined and node/element
-        coordinates are written unconverted.
-    model_length_unit : str, optional
-        The model's native coordinate length unit ('FEET' or 'METERS'),
-        used together with *crs* to convert node/element/stream
-        coordinates (which are stored in this unit) into whatever unit
-        *crs* expects. If not given, falls back to ``grid.length_unit``
-        (set by :meth:`IWFMModel.from_preprocessor` from the
-        PreProcessor main file's FACTLTOU/UNITLTOU) and then to a
-        best-effort guess from ``grid.nodes_factor``. Pass this
-        explicitly when that can't be resolved -- see
-        :attr:`resolved_model_length_unit`.
-
-    Attributes
-    ----------
-    resolved_model_length_unit : str or None
-        The model length unit actually used ('FEET', 'METERS', or None
-        if it could not be determined).
-    resolved_crs_length_unit : str or None
-        The target CRS's length unit actually used, or None if *crs* is
-        unset or its unit could not be determined.
-    adjustment_factor : float
-        The multiplicative factor applied to node/element/stream
-        coordinates to convert them from ``resolved_model_length_unit``
-        to ``resolved_crs_length_unit``. 1.0 when no conversion is
-        needed or possible.
+    input_crs : str or pyproj.CRS, optional
+        Coordinate reference system of the original input node coordinates
+        (e.g., 'EPSG:26910', 'EPSG:2227'). Defaults to 'EPSG:26910'.
+    output_crs : str or pyproj.CRS, optional
+        Target coordinate reference system for exported GIS files. If None,
+        defaults to matching *input_crs*.
 
     Raises
     ------
@@ -110,12 +75,12 @@ class GISExporter:
     --------
     Basic export to GeoPackage:
 
-    >>> exporter = GISExporter(grid=grid, crs="EPSG:26910")
+    >>> exporter = GISExporter(grid=grid, input_crs="EPSG:26910")
     >>> exporter.export_geopackage("model.gpkg")
 
     Export with stratigraphy data:
 
-    >>> exporter = GISExporter(grid=grid, stratigraphy=strat, crs="EPSG:26910")
+    >>> exporter = GISExporter(grid=grid, stratigraphy=strat, input_crs="EPSG:26910")
     >>> gdf = exporter.nodes_to_geodataframe()
     >>> # GeoDataFrame includes gs_elev, layer_1_top, layer_1_bottom, etc.
 
@@ -137,8 +102,8 @@ class GISExporter:
         grid: AppGrid,
         stratigraphy: Stratigraphy | None = None,
         streams: AppStream | None = None,
-        crs: str | pyproj.CRS | None = None,
-        model_length_unit: str | None = None,
+        input_crs: str | pyproj.CRS | None = None,
+        output_crs: str | pyproj.CRS | None = None,
     ) -> None:
         """
         Initialize the GIS exporter.
@@ -147,120 +112,52 @@ class GISExporter:
             grid: Model mesh
             stratigraphy: Model stratigraphy (optional)
             streams: Stream network (optional)
-            crs: Coordinate reference system (e.g., 'EPSG:26910'). If
-                None, no CRS is assigned and coordinates are exported
-                unconverted.
-            model_length_unit: Explicit override for the model's native
-                coordinate length unit ('FEET' or 'METERS'). See the
-                class docstring for the fallback order used when this
-                is omitted.
+            input_crs: Input coordinate reference system (e.g., 'EPSG:26910'). If
+                    None, no CRS is assigned and coordinates are exported
+                    unconverted.
+            output_crs: Output coordinate reference system (e.g., 'EPSG:26910'). If
+                    None, the input CRS is utilized.
         """
         self.grid = grid
         self.stratigraphy = stratigraphy
         self.streams = streams
-        self.crs = pyproj.CRS.from_user_input(crs) if crs is not None else None
-        self._model_length_unit_override = model_length_unit
 
-        self.resolved_crs_length_unit = self._crs_length_unit()
-        self.resolved_model_length_unit = self._model_length_unit()
-        self.adjustment_factor = self._calculate_adjustment()
+        # 1. Define Input CRS (default to EPSG:26910 if user provides None)
+        self.input_crs = (
+            pyproj.CRS.from_user_input(input_crs)
+            if input_crs is not None
+            else pyproj.CRS.from_user_input("EPSG:26910")
+        )
 
-    def _crs_length_unit(self) -> str | None:
-        """Return the target CRS's length unit ('FEET'/'METERS'/None)."""
-        if self.crs is None:
-            return None
-        try:
-            unit_name = self.crs.axis_info[0].unit_name
-        except (AttributeError, IndexError):
-            return None
-        return normalize_length_unit_name(unit_name)
+        # 2. Define Output CRS (default to match input_crs if not explicitly set)
+        self.output_crs = (
+            pyproj.CRS.from_user_input(output_crs)
+            if output_crs is not None
+            else self.input_crs
+        )
 
-    def _model_length_unit(self) -> str | None:
+
+    @property
+    def _unscale_factor(self) -> float:
         """
-        Resolve the model's native coordinate length unit, in priority
-        order:
-
-        1. An explicit ``model_length_unit`` passed to the constructor.
-        2. ``grid.length_unit``, set by
-           :meth:`IWFMModel.from_preprocessor` from the PreProcessor
-           main file's FACTLTOU/UNITLTOU pair -- authoritative.
-        3. A best-effort guess from the raw Nodes file conversion factor
-           (``grid.nodes_factor``) against the feet<->meters conversion
-           constants. This only resolves the ambiguity when the factor
-           isn't ~1.0 -- a factor of 1.0 genuinely doesn't say what unit
-           the (matching) input and internal coordinates are in.
-
-        Returns None if none of the above resolve it.
+        Factor to convert internal model coordinates back to original node file coordinates.
+        If grid.nodes_factor is 1.0 or None, no scaling is applied.
         """
-        override = normalize_length_unit_name(self._model_length_unit_override)
-        if override is not None:
-            return override
+        nodes_factor = getattr(self.grid, "nodes_factor", 1.0)
+        if nodes_factor is None or nodes_factor <= 0:
+            return 1.0
+        return 1.0 / nodes_factor
 
-        grid_unit = normalize_length_unit_name(getattr(self.grid, "length_unit", None))
-        if grid_unit is not None:
-            return grid_unit
-
-        # Fallback: guess from the Nodes file FACT value alone.
-        model_factor = getattr(self.grid, "nodes_factor", None)
-        if model_factor is None or model_factor <= 0:
-            return None
-        if math.isclose(model_factor, FEET_PER_METER, rel_tol=1e-3):
-            # Raw coordinates were in meters, converted to internal feet.
-            return "FEET"
-        if math.isclose(model_factor, METERS_PER_FOOT, rel_tol=1e-3):
-            # Raw coordinates were in feet, converted to internal meters.
-            return "METERS"
-        return None
-
-    def _calculate_adjustment(self) -> float:
+    def _finalize_gdf(self, data: list[dict], geometry_col: str = "geometry") -> gpd.GeoDataFrame:
         """
-        Determine the multiplicative factor that converts node/element/
-        stream coordinates (stored in the model's native length unit)
-        into the units expected by the target CRS.
-
-        Returns 1.0 (no conversion) when no CRS is set. Otherwise, if
-        either the CRS's unit or the model's native unit can't be
-        determined, also returns 1.0 but emits a :class:`SpatialUnitWarning`
-        -- silently assuming no conversion is needed can misplace the
-        exported geometry, so callers should heed the warning (or pass
-        ``model_length_unit`` explicitly to resolve it).
+        Creates a GeoDataFrame in input_crs and reprojects to output_crs if needed.
         """
-        if self.crs is None:
-            return 1.0
+        gdf = gpd.GeoDataFrame(data, crs=self.input_crs)
 
-        crs_unit = self.resolved_crs_length_unit
-        if crs_unit is None:
-            warnings.warn(
-                "Could not determine the target CRS's length unit; "
-                "assuming it already matches the model and applying no "
-                "coordinate conversion. Please verify the specified CRS: "
-                "https://spatialreference.org/",
-                category=SpatialUnitWarning,
-                stacklevel=3,
-            )
-            return 1.0
+        if self.output_crs != self.input_crs:
+            gdf = gdf.to_crs(self.output_crs)
 
-        model_unit = self.resolved_model_length_unit
-        if model_unit is None:
-            warnings.warn(
-                "Could not determine the model's native coordinate length "
-                "unit: the PreProcessor main file's FACTLTOU/UNITLTOU are "
-                "unavailable and the Nodes file conversion factor "
-                f"({getattr(self.grid, 'nodes_factor', None)!r}) is "
-                "ambiguous (e.g. 1.0). Assuming it already matches the "
-                "target CRS and applying no coordinate conversion. Pass "
-                "GISExporter(..., model_length_unit='FEET' or 'METERS') "
-                "to resolve this explicitly.",
-                category=SpatialUnitWarning,
-                stacklevel=3,
-            )
-            return 1.0
-
-        if model_unit == crs_unit:
-            return 1.0
-        if model_unit == "FEET" and crs_unit == "METERS":
-            return METERS_PER_FOOT
-        return FEET_PER_METER  # model_unit == "METERS" and crs_unit == "FEET"
+        return gdf
 
     def nodes_to_geodataframe(
         self,
@@ -276,18 +173,19 @@ class GISExporter:
             GeoDataFrame with node points
         """
         data = []
+        scale = self._unscale_factor
 
         for node in self.grid.iter_nodes():
-            converted_x = node.x * self.adjustment_factor
-            converted_y = node.y * self.adjustment_factor
+            unscaled_x = node.x * scale
+            unscaled_y = node.y * scale
 
             row = {
                 "node_id": node.id,
-                "x": converted_x,
-                "y": converted_y,
+                "x": unscaled_x,
+                "y": unscaled_y,
                 "is_boundary": node.is_boundary,
                 "area": node.area,
-                "geometry": Point(converted_x, converted_y),
+                "geometry": Point(unscaled_x, unscaled_y),
             }
 
             # Add stratigraphy data if available
@@ -311,8 +209,7 @@ class GISExporter:
 
             data.append(row)
 
-        gdf = gpd.GeoDataFrame(data, crs=self.crs)
-        return gdf
+        return self._finalize_gdf(data)
 
     def elements_to_geodataframe(
         self,
@@ -328,17 +225,17 @@ class GISExporter:
             GeoDataFrame with element polygons
         """
         data = []
+        scale = self._unscale_factor
 
         for elem in self.grid.iter_elements():
             # Get vertex coordinates
             coords = []
             for vid in elem.vertices:
                 node = self.grid.nodes[vid]
+                unscaled_x = node.x * scale
+                unscaled_y = node.y * scale
+                coords.append((unscaled_x, unscaled_y))
 
-                converted_x = node.x * self.adjustment_factor
-                converted_y = node.y * self.adjustment_factor
-
-                coords.append((converted_x, converted_y))
             # Close the polygon
             coords.append(coords[0])
 
@@ -358,8 +255,7 @@ class GISExporter:
 
             data.append(row)
 
-        gdf = gpd.GeoDataFrame(data, crs=self.crs)
-        return gdf
+        return self._finalize_gdf(data)
 
     def streams_to_geodataframe(self) -> gpd.GeoDataFrame:
         """
@@ -369,12 +265,12 @@ class GISExporter:
             GeoDataFrame with stream reach linestrings
         """
         if self.streams is None:
-            return gpd.GeoDataFrame(columns=["reach_id", "name", "geometry"], crs=self.crs)
+            return gpd.GeoDataFrame(columns=["reach_id", "name", "geometry"], crs=self.output_crs)
 
         data = []
+        scale = self._unscale_factor
 
         for reach in self.streams.iter_reaches():
-            # Get node coordinates for this reach, resolving via gw_node
             coords = []
             for nid in reach.nodes:
                 if nid in self.streams.nodes:
@@ -382,16 +278,13 @@ class GISExporter:
                     gw = getattr(sn, "gw_node", None)
                     if gw is not None and gw in self.grid.nodes:
                         gn = self.grid.nodes[gw]
-
-                        converted_gn_x = gn.x * self.adjustment_factor
-                        converted_gn_y = gn.y * self.adjustment_factor
-
-                        coords.append((converted_gn_x, converted_gn_y))
+                        unscaled_gn_x = gn.x * scale
+                        unscaled_gn_y = gn.y * scale
+                        coords.append((unscaled_gn_x, unscaled_gn_y))
                     elif sn.x != 0.0 or sn.y != 0.0:
-                        converted_sn_x = sn.x * self.adjustment_factor
-                        converted_sn_y = sn.y * self.adjustment_factor
-
-                        coords.append((converted_sn_x, converted_sn_y))
+                        unscaled_sn_x = sn.x * scale
+                        unscaled_sn_y = sn.y * scale
+                        coords.append((unscaled_sn_x, unscaled_sn_y))
 
             if len(coords) >= 2:
                 row = {
@@ -402,8 +295,7 @@ class GISExporter:
                 }
                 data.append(row)
 
-        gdf = gpd.GeoDataFrame(data, crs=self.crs)
-        return gdf
+        return self._finalize_gdf(data)
 
     def subregions_to_geodataframe(self) -> gpd.GeoDataFrame:
         """
@@ -430,17 +322,17 @@ class GISExporter:
         Returns:
             GeoDataFrame with model boundary polygon
         """
-        from shapely.ops import unary_union
-
-        # Get elements and dissolve all to get boundary
+        # Get elements (already converted & reprojected to output_crs)
         elements_gdf = self.elements_to_geodataframe()
-        boundary_geom = unary_union(elements_gdf.geometry)
 
-        gdf = gpd.GeoDataFrame(
-            [{"boundary_id": 1, "geometry": boundary_geom}],
-            crs=self.crs,
-        )
-        return gdf
+        # Dissolve all elements into a single boundary polygon
+        boundary_gdf = elements_gdf.dissolve()
+        boundary_gdf["boundary_id"] = 1
+
+        # Clean up columns to keep only the boundary geometry and ID
+        boundary_gdf = boundary_gdf[["boundary_id", "geometry"]]
+
+        return boundary_gdf
 
     def export_geopackage(
         self,
