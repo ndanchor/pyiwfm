@@ -1796,8 +1796,9 @@ class IWFMModel:
                     _record_component_failure(model, "small_watershed", sw_file, e, strict=strict)
 
         # Load unsaturated zone component (optional)
-        if sim_config.unsaturated_zone_file:
+        if sim_config.unsaturated_zone_file and sim_config.unsaturated_zone_file.is_file():
             uz_file = _resolve_path(base_dir, str(sim_config.unsaturated_zone_file))
+
             model.source_files["unsatzone_main"] = uz_file
             if uz_file.exists():
                 try:
